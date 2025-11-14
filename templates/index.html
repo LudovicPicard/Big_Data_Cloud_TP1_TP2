@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Stations Vélib – Temps Réel</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #111;
+      color: #eee;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      color: #0ff;
+    }
+    table {
+      width: 90%;
+      margin: 2em auto;
+      border-collapse: collapse;
+      background-color: #222;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+      border-bottom: 1px solid #333;
+    }
+    th {
+      background-color: #333;
+      color: #0ff;
+    }
+    tr:hover {
+      background-color: #2a2a2a;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚲 Stations Vélib avec +10 eBikes à Paris</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Station</th>
+        <th>eBikes</th>
+        <th>Vélos totaux</th>
+        <th>Coordonnées</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in stations %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ s.ebike }}</td>
+        <td>{{ s.numbikesavailable }}</td>
+        <td>
+          {% if s.coordonnees_geo %}
+            {{ s.coordonnees_geo.lat }}, {{ s.coordonnees_geo.lon }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

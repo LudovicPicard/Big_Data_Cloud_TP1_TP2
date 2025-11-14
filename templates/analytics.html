@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Vélib Analytics</title>
+
+  <!-- Leaflet + heat plugin -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    :root{ --bg:#fff; --panel:#fff; --text:#111; --accent:#0a84ff; --muted:#666 }
+    body.dark{ --bg:#0b1220; --panel:#07101a; --text:#e6eef6; --accent:#42a5f5; --muted:#9aa7b7 }
+    body{ margin:0; font-family:Arial, sans-serif; background:var(--bg); color:var(--text); }
+    header{ display:flex; justify-content:space-between; align-items:center; padding:10px 20px; background:var(--accent); color:#fff; }
+    #container{ display:flex; height:calc(100vh - 52px); }
+    #filters{ width:420px; background:var(--panel); padding:12px; overflow:auto; border-right:1px solid rgba(0,0,0,0.06); }
+    #content{ flex:1; padding:12px; display:flex; flex-direction:column; gap:12px; }
+    .chart-row{ display:flex; gap:12px; }
+    .card{ background:var(--panel); padding:12px; border-radius:6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); flex:1; }
+    #mini-map{ height:240px; border-radius:6px; overflow:hidden; }
+    canvas{ max-width:100%; }
+    .small{ font-size:13px; color:var(--muted); }
+    button{ padding:8px 10px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer;}
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="font-weight:700;">📊 Vélib Analytics</div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <a href="/" style="color:#fff; text-decoration:none; padding:6px 10px; background:rgba(255,255,255,0.08); border-radius:6px;">Carte</a>
+    <button id="toggle-theme" class="small">Mode sombre</button>
+  </div>
+</header>
+
+<div id="container">
+  <div id="filters">
+    <h3>Filtres</h3>
+    <label>Min eBikes:</label><input id="filter-ebike" type="number" value="0" min="0" style="margin-top:4px;">
+    <div style="margin-top:8px;">
+      <label>Station:</label>
+      <select id="filter-station"><option value="">Toutes</option></select>
+    </div>
+    <div style="margin-top:8px;">
+      <label>Arrondissement:</label>
+      <select id="filter-arrondissement"><option value="">Tous</option></select>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px;">
+      <button id="apply-filter">Appliquer</button>
+      <button id="reset-filter" class="small">Réinitialiser</button>
+    </div>
+    <p class="small" style="margin-top:12px;">Les graphiques réagissent aux filtres. Données issues de /api/stations (temps réel).</p>
+  </div>
+
+  <div id="content">
+    <div class="chart-row">
+      <div class="card" style="flex:0.6;">
+        <h4>Répartition vélos (électriques vs mécaniques)</h4>
+        <canvas id="donutChart"></canvas>
+      </div>
+      <div class="card" style="flex:0.4;">
+        <h4>Disponibilité totale</h4>
+        <canvas id="gaugeChart"></canvas>
+        <div class="small" id="gauge-text"></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="card">
+        <h4>Top 10 stations (plus pleines)</h4>
+        <canvas id="topFull"></canvas>
+      </div>
+      <div class="card">
+        <h4>Top 10 stations (plus vides)</h4>
+        <canvas id="topEmpty"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="card" style="flex:0.6;">
+        <h4>Répartition par arrondissement</h4>
+        <canvas id="byArr"></canvas>
+      </div>
+      <div class="card" style="flex:0.4;">
+        <h4>Mini heatmap (intensité = # vélos)</h4>
+        <div id="mini-map"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ---------- Theme toggle (shared) ---------- */
+const body = document.body;
+const themeBtn = document.getElementById("toggle-theme");
+const theme = localStorage.getItem("theme") || "light";
+if(theme === "dark") body.classList.add("dark");
+themeBtn.textContent = body.classList.contains("dark") ? "Mode clair" : "Mode sombre";
+themeBtn.addEventListener("click", ()=>{
+  body.classList.toggle("dark");
+  localStorage.setItem("theme", body.classList.contains("dark") ? "dark" : "light");
+  themeBtn.textContent = body.classList.contains("dark") ? "Mode clair" : "Mode sombre";
+});
+
+/* ---------- Globals ---------- */
+let stationsData = [];
+let filteredData = [];
+
+/* ---------- Charts placeholders ---------- */
+let donutChart, gaugeChart, topFullChart, topEmptyChart, byArrChart;
+
+/* ---------- Fetch data and init ---------- */
+async function fetchStations(){
+  const res = await fetch("/api/stations");
+  const data = await res.json();
+  stationsData = data;
+  populateFilters();
+  applyFilter();
+}
+fetchStations();
+
+/* ---------- Populate filter selects ---------- */
+function populateFilters(){
+  const stationSelect = document.getElementById("filter-station");
+  stationSelect.innerHTML = '<option value="">Toutes</option>';
+  const stationsUnique = [...new Set(stationsData.map(s=>s.name))].sort();
+  stationsUnique.forEach(n => { const o = document.createElement("option"); o.value=n; o.text=n; stationSelect.appendChild(o); });
+
+  const arrSelect = document.getElementById("filter-arrondissement");
+  arrSelect.innerHTML = '<option value="">Tous</option>';
+  const arrs = [...new Set(stationsData.map(s=>s.nom_arrondissement_communes))].filter(Boolean).sort();
+  arrs.forEach(a => { const o=document.createElement("option"); o.value=a; o.text=a; arrSelect.appendChild(o); });
+}
+
+/* ---------- Helpers ---------- */
+function computeClassiques(s){ return (s.numbikesavailable ?? 0) - (s.ebike ?? 0); }
+
+/* ---------- Apply filters (and update visuals) ---------- */
+function applyFilter(){
+  const minEbike = parseInt(document.getElementById("filter-ebike").value || 0);
+  const station = document.getElementById("filter-station").value;
+  const arr = document.getElementById("filter-arrondissement").value;
+  filteredData = stationsData.filter(s=>{
+    let ok=true;
+    if(minEbike) ok = ok && (s.ebike ?? 0) >= minEbike;
+    if(station) ok = ok && s.name === station;
+    if(arr) ok = ok && s.nom_arrondissement_communes === arr;
+    return ok;
+  });
+  updateCharts();
+}
+document.getElementById("apply-filter").addEventListener("click", applyFilter);
+document.getElementById("reset-filter").addEventListener("click", ()=>{ document.getElementById("filter-ebike").value=0; document.getElementById("filter-station").value=""; document.getElementById("filter-arrondissement").value=""; applyFilter(); });
+
+/* ---------- Chart update logic ---------- */
+function updateCharts(){
+  if(!filteredData.length) return;
+
+  // donut: total ebike vs classical
+  const totalEbike = filteredData.reduce((s,x)=>s + (x.ebike ?? 0),0);
+  const totalAll = filteredData.reduce((s,x)=>s + (x.numbikesavailable ?? 0),0);
+  const totalClass = totalAll - totalEbike;
+
+  if(!donutChart){
+    const ctx = document.getElementById("donutChart").getContext("2d");
+    donutChart = new Chart(ctx, { type:'doughnut', data:{ labels:['eBikes','Classiques'], datasets:[{ data:[totalEbike,totalClass], backgroundColor:['#42a5f5','#ffc107'] }] }, options:{ responsive:true }});
+  } else {
+    donutChart.data.datasets[0].data = [totalEbike,totalClass];
+    donutChart.update();
+  }
+
+  // gauge: simple doughnut as gauge
+  const gaugeVal = totalAll; // total available
+  const gaugeMax = stationsData.length * 30; // arbitrary max: avg 30 per station
+  const gaugeCtx = document.getElementById("gaugeChart").getContext("2d");
+  const gaugeData = [gaugeVal, Math.max(gaugeMax - gaugeVal, 0)];
+  if(!gaugeChart){
+    gaugeChart = new Chart(gaugeCtx, { type:'doughnut', data:{ datasets:[{ data:gaugeData, backgroundColor:['#4caf50','#e0e0e0'] }] }, options:{ rotation: -90 * Math.PI/180, circumference: 180, cutout:'70%', plugins:{ legend:{ display:false } } }});
+  } else {
+    gaugeChart.data.datasets[0].data = gaugeData; gaugeChart.update();
+  }
+  document.getElementById("gauge-text").textContent = `Total vélos disponibles: ${gaugeVal}`;
+
+  // Top full
+  const byTotalDesc = [...filteredData].sort((a,b)=> (b.numbikesavailable||0) - (a.numbikesavailable||0)).slice(0,10);
+  const topNames = byTotalDesc.map(s=>s.name);
+  const topVals = byTotalDesc.map(s=>s.numbikesavailable||0);
+  if(!topFullChart){
+    const ctx2 = document.getElementById("topFull").getContext("2d");
+    topFullChart = new Chart(ctx2, { type:'bar', data:{ labels:topNames, datasets:[{ label:'Vélos disponibles', data:topVals, backgroundColor:'#42a5f5' }] }, options:{indexAxis:'y', responsive:true, plugins:{ legend:{ display:false }}}});
+  } else { topFullChart.data.labels = topNames; topFullChart.data.datasets[0].data = topVals; topFullChart.update(); }
+
+  // Top empty
+  const byTotalAsc = [...filteredData].sort((a,b)=> (a.numbikesavailable||0) - (b.numbikesavailable||0)).slice(0,10);
+  const emptyNames = byTotalAsc.map(s=>s.name);
+  const emptyVals = byTotalAsc.map(s=>s.numbikesavailable||0);
+  if(!topEmptyChart){
+    const ctx3 = document.getElementById("topEmpty").getContext("2d");
+    topEmptyChart = new Chart(ctx3, { type:'bar', data:{ labels:emptyNames, datasets:[{ label:'Vélos disponibles', data:emptyVals, backgroundColor:'#ef5350' }] }, options:{ indexAxis:'y', responsive:true, plugins:{ legend:{ display:false }}}});
+  } else { topEmptyChart.data.labels = emptyNames; topEmptyChart.data.datasets[0].data = emptyVals; topEmptyChart.update(); }
+
+  // By arrondissement
+  const summary = {};
+  filteredData.forEach(s=>{
+    const arr = s.nom_arrondissement_communes || "Inconnu";
+    if(!summary[arr]) summary[arr] = 0;
+    summary[arr] += s.numbikesavailable || 0;
+  });
+  const arrLabels = Object.keys(summary).sort();
+  const arrValues = arrLabels.map(k=>summary[k]);
+  if(!byArrChart){
+    const ctx4 = document.getElementById("byArr").getContext("2d");
+    byArrChart = new Chart(ctx4, { type:'bar', data:{ labels:arrLabels, datasets:[{ label:'Vélos disponibles', data:arrValues, backgroundColor:'#7e57c2' }] }, options:{ responsive:true, plugins:{ legend:{ display:false }}, scales:{ x:{ ticks:{ maxRotation:45 }}}}});
+  } else { byArrChart.data.labels = arrLabels; byArrChart.data.datasets[0].data = arrValues; byArrChart.update(); }
+
+  // Mini heatmap
+  renderMiniHeatmap(filteredData);
+}
+
+/* ---------- Mini heatmap using leaflet.heat ---------- */
+let heatmapLayer=null;
+function renderMiniHeatmap(data){
+  const container = document.getElementById("mini-map");
+  if(!container._map){
+    const miniMap = L.map('mini-map', { attributionControl:false, zoomControl:false }).setView([48.8566,2.3522],12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(miniMap);
+    container._map = miniMap;
+  }
+  const m = container._map;
+  if(heatmapLayer){ heatmapLayer.remove(); heatmapLayer=null; }
+
+  const points = data.map(s=>{
+    const lat = s.coordonnees_geo.lat ?? s.coordonnees_geo[0];
+    const lon = s.coordonnees_geo.lon ?? s.coordonnees_geo[1];
+    const intensity = Math.max(0, s.numbikesavailable || 0);
+    return [lat, lon, intensity];
+  }).filter(Boolean);
+
+  heatmapLayer = L.heatLayer(points, {radius:25, blur:20, maxZoom:15}).addTo(m);
+}
+
+/* ---------- Auto refresh charts every 2 minutes ---------- */
+setInterval(()=> fetchStations(), 120000);
+</script>
+</body>
+</html>

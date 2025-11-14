@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Vélib Paris Dashboard</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <!-- Leaflet MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    :root{
+      --bg:#f5f5f5;
+      --panel:#fff;
+      --text:#111;
+      --accent:#0a84ff;
+      --muted:#666;
+    }
+    body.dark {
+      --bg:#0f1720;
+      --panel:#0b1220;
+      --text:#e6eef6;
+      --accent:#42a5f5;
+      --muted:#9aa7b7;
+    }
+
+    body { margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { display:flex; align-items:center; justify-content:space-between; background:var(--accent); color:white; padding:10px 20px; font-size:20px; font-weight:600; }
+    .nav-buttons { display:flex; gap:8px; align-items:center; }
+
+    /* Layout */
+    #container { display: flex; height: calc(100vh - 52px); }
+    #filters { width: 440px; background: var(--panel); padding: 12px; overflow-y: auto; border-right: 1px solid rgba(0,0,0,0.06); color:var(--text); }
+    #map { flex: 1; }
+
+    input, select { width: 100%; padding:6px; border-radius:4px; border:1px solid #ccc; box-sizing:border-box; margin-top:4px; }
+    body.dark input, body.dark select { background:#07101a; border:1px solid rgba(255,255,255,0.06); color:var(--text); }
+
+    button { padding:8px 12px; cursor:pointer; background:var(--accent); border:none; color:#fff; border-radius:6px; }
+    button.secondary { background:var(--muted); }
+    .small { padding:6px 8px; font-size:13px; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; color:var(--text); }
+    th, td { border: 1px solid rgba(0,0,0,0.08); padding:6px; text-align:left; }
+    body.dark th, body.dark td { border-color: rgba(255,255,255,0.03); }
+
+    /* Loader */
+    #loading { position: fixed; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; background: rgba(0,0,0,0.55); color:#fff; z-index:9999; font-size:20px; }
+    .spinner { border:8px solid rgba(255,255,255,0.12); border-top:8px solid #fff; border-radius:50%; width:48px; height:48px; animation:spin 1s linear infinite; margin-right:12px; }
+    @keyframes spin { to{ transform:rotate(360deg); } }
+
+    .header-title { font-weight:700; display:flex; gap:12px; align-items:center;}
+    .link { color:inherit; text-decoration:none; padding:6px 10px; border-radius:6px; background: rgba(255,255,255,0.06); }
+    .dark .link { background: rgba(255,255,255,0.03); }
+
+    .muted { color:var(--muted); font-size:13px; }
+    .section { margin-top:10px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">🚲 Vélib Paris</div>
+  <div class="nav-buttons">
+    <a class="link" href="/">Carte</a>
+    <a class="link" href="/analytics">Analyses</a>
+    <button id="toggle-theme" class="small">Mode sombre</button>
+  </div>
+</header>
+
+<!-- Loader -->
+<div id="loading"><div class="spinner"></div>Chargement des données Vélib...</div>
+
+<div id="container">
+  <div id="filters">
+    <h3>Filtres</h3>
+
+    <label>Min eBikes:</label>
+    <input type="number" id="filter-ebike" value="0" min="0">
+
+    <div class="section">
+      <label>Station:</label>
+      <select id="filter-station"><option value="">Toutes</option></select>
+    </div>
+
+    <div class="section">
+      <label>Arrondissement:</label>
+      <select id="filter-arrondissement"><option value="">Tous</option></select>
+    </div>
+
+    <div class="section" style="display:flex; gap:8px; margin-top:8px;">
+      <button id="apply-filter">Appliquer</button>
+      <button id="reset-filter" class="secondary">Réinitialiser</button>
+      <button id="refresh-data" class="secondary">Rafraîchir</button>
+    </div>
+
+    <h3 class="section">Résumé par arrondissement</h3>
+    <table id="arrondissement-table"><thead><tr><th>Arr.</th><th>Stations</th><th>eBikes</th><th>Classiques</th><th>Total</th></tr></thead><tbody></tbody></table>
+
+    <h3 class="section">Stations filtrées</h3>
+    <table id="stations-table"><thead><tr><th>Station</th><th>eBikes</th><th>Classiques</th><th>Total</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script>
+/* ---------- Theme toggle (persist) ---------- */
+const body = document.body;
+const themeBtn = document.getElementById("toggle-theme");
+const theme = localStorage.getItem("theme") || "light";
+if(theme === "dark") body.classList.add("dark");
+themeBtn.textContent = body.classList.contains("dark") ? "Mode clair" : "Mode sombre";
+themeBtn.addEventListener("click", () => {
+  body.classList.toggle("dark");
+  localStorage.setItem("theme", body.classList.contains("dark") ? "dark" : "light");
+  themeBtn.textContent = body.classList.contains("dark") ? "Mode clair" : "Mode sombre";
+});
+
+/* ---------- Map setup ---------- */
+let stationsData = [];
+let markersCluster = L.markerClusterGroup();
+let currentFilteredData = [];
+
+const map = L.map("map").setView([48.8566, 2.3522], 12);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{ attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+map.addLayer(markersCluster);
+
+/* ---------- Utilities ---------- */
+function computeClassiques(s){ return (s.numbikesavailable ?? 0) - (s.ebike ?? 0); }
+function hideLoading(){ const l = document.getElementById("loading"); if(l) l.style.display="none"; }
+
+/* ---------- Fetch & init ---------- */
+async function loadData(){
+  try{
+    const res = await fetch("/api/stations");
+    const data = await res.json();
+    stationsData = data;
+    currentFilteredData = data;
+    populateFilters();
+    renderMap(data);
+    renderTable(data);
+    renderArrondissement(data);
+  }catch(e){
+    console.error("Erreur fetch:", e);
+  }finally{
+    hideLoading();
+  }
+}
+loadData();
+
+/* ---------- Populate filter selects ---------- */
+function populateFilters(){
+  const stationSelect = document.getElementById("filter-station");
+  stationSelect.innerHTML = '<option value="">Toutes</option>';
+  const stationsUnique = [...new Set(stationsData.map(s=>s.name))].sort();
+  stationsUnique.forEach(name => { const opt = document.createElement("option"); opt.value=name; opt.text=name; stationSelect.appendChild(opt); });
+
+  const arrSelect = document.getElementById("filter-arrondissement");
+  arrSelect.innerHTML = '<option value="">Tous</option>';
+  const arrs = [...new Set(stationsData.map(s=>s.nom_arrondissement_communes))].filter(Boolean).sort();
+  arrs.forEach(a => { const opt=document.createElement("option"); opt.value=a; opt.text=a; arrSelect.appendChild(opt); });
+}
+
+/* ---------- Render map ---------- */
+function renderMap(data){
+  markersCluster.clearLayers();
+  data.forEach(station => {
+    if(!station.coordonnees_geo) return;
+    const lat = station.coordonnees_geo.lat ?? station.coordonnees_geo[0];
+    const lon = station.coordonnees_geo.lon ?? station.coordonnees_geo[1];
+    const classiques = computeClassiques(station);
+    const marker = L.marker([lat, lon]);
+    marker.bindPopup(`<b>${station.name}</b><br>Arr: ${station.nom_arrondissement_communes || 'Inconnu'}<br>eBikes: ${station.ebike}<br>Classiques: ${classiques}<br>Total: ${station.numbikesavailable}`);
+    marker.on('click', ()=> applyFilter({stationName: station.name}));
+    markersCluster.addLayer(marker);
+  });
+}
+
+/* ---------- Tables ---------- */
+function renderTable(data){
+  const tbody = document.querySelector("#stations-table tbody");
+  tbody.innerHTML = "";
+  data.forEach(s=>{
+    const classiques = computeClassiques(s);
+    const row = `<tr><td>${s.name}</td><td>${s.ebike}</td><td>${classiques}</td><td>${s.numbikesavailable}</td></tr>`;
+    tbody.innerHTML += row;
+  });
+}
+
+function renderArrondissement(data){
+  const summary = {};
+  data.forEach(s=>{
+    const arr = s.nom_arrondissement_communes || "Inconnu";
+    const classiques = computeClassiques(s);
+    if(!summary[arr]) summary[arr]={stations:0, ebikes:0, classiques:0, total:0};
+    summary[arr].stations++;
+    summary[arr].ebikes += s.ebike ?? 0;
+    summary[arr].classiques += classiques;
+    summary[arr].total += s.numbikesavailable ?? 0;
+  });
+  const tbody = document.querySelector("#arrondissement-table tbody");
+  tbody.innerHTML = "";
+  Object.keys(summary).sort().forEach(arr=>{
+    const s = summary[arr];
+    tbody.innerHTML += `<tr><td>${arr}</td><td>${s.stations}</td><td>${s.ebikes}</td><td>${s.classiques}</td><td>${s.total}</td></tr>`;
+  });
+}
+
+/* ---------- Filters ---------- */
+function applyFilter(extra={}){
+  const minEbike = parseInt(document.getElementById("filter-ebike").value || 0);
+  const station = document.getElementById("filter-station").value;
+  const arr = document.getElementById("filter-arrondissement").value;
+  currentFilteredData = stationsData.filter(s=>{
+    let pass = true;
+    if(minEbike) pass = pass && (s.ebike ?? 0) >= minEbike;
+    if(station) pass = pass && s.name === station;
+    if(arr) pass = pass && s.nom_arrondissement_communes === arr;
+    if(extra.stationName) pass = pass && s.name === extra.stationName;
+    return pass;
+  });
+  renderMap(currentFilteredData);
+  renderTable(currentFilteredData);
+  renderArrondissement(currentFilteredData);
+}
+document.getElementById("apply-filter").addEventListener("click", ()=>applyFilter());
+
+/* ---------- Reset & refresh ---------- */
+document.getElementById("reset-filter").addEventListener("click", ()=>{
+  document.getElementById("filter-ebike").value = 0;
+  document.getElementById("filter-station").value = "";
+  document.getElementById("filter-arrondissement").value = "";
+  currentFilteredData = stationsData;
+  renderMap(stationsData);
+  renderTable(stationsData);
+  renderArrondissement(stationsData);
+});
+document.getElementById("refresh-data").addEventListener("click", async ()=>{
+  document.getElementById("loading").style.display="flex";
+  await loadData();
+});
+
+/* ---------- Map interactions ---------- */
+// click empty map resets filters
+map.on('click', ()=>{
+  document.getElementById("filter-ebike").value = 0;
+  document.getElementById("filter-station").value = "";
+  document.getElementById("filter-arrondissement").value = "";
+  currentFilteredData = stationsData;
+  renderMap(stationsData);
+  renderTable(stationsData);
+  renderArrondissement(stationsData);
+});
+
+// moveend -> show only visible stations (still respects currentFilteredData)
+map.on('moveend', () => {
+  const bounds = map.getBounds();
+  const visible = currentFilteredData.filter(s=>{
+    if(!s.coordonnees_geo) return false;
+    const lat = s.coordonnees_geo.lat ?? s.coordonnees_geo[0];
+    const lon = s.coordonnees_geo.lon ?? s.coordonnees_geo[1];
+    return bounds.contains([lat, lon]);
+  });
+  renderMap(visible);
+});
+
+/* ---------- Auto refresh every 2 minutes ---------- */
+setInterval(()=>{ loadData(); }, 120000);
+</script>
+</body>
+</html>
