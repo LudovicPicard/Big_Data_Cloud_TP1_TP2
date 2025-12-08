@@ -104,7 +104,7 @@ Big_Data_Cloud_TP1_TP2/
 ├── templates/
 │   ├── map.html           # Dashboard interactif avec Leaflet
 │   └── index.html         # Page alternative ou tableau simple
-├── Neo4J_Connect.py       # Partie Neo4J (TP2, non utilisée ici)
+├── Neo4J_Connect.py       # Partie Neo4J
 ├── velib_sync.py          # Scripts pour alimenter MongoDB (optionnel)
 ├─ db.csv                  # Dataset Marvel vs DC
 ├── README.md
