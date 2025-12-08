@@ -167,6 +167,7 @@ Films par studio
 MATCH (m:Movie)
 RETURN m.title AS Movie, m.company AS Studio
 ```
+![alt text](images/image7.png)
 
 Films les plus rentables
 ```bash
@@ -176,6 +177,7 @@ RETURN m.title AS Movie, (m.gross_worldwide - m.budget) AS Profit
 ORDER BY Profit DESC
 LIMIT 20
 ```
+![alt text](images/image8.png)
 
 Distributions par decennie
 ```bash
@@ -184,6 +186,7 @@ WITH m, toInteger(substring(m.release,0,4)) AS year
 WITH year - (year % 10) AS decade, collect(m.title) AS movies
 RETURN decade, movies
 ```
+![alt text](images/image9.png)
 
 Films filtrés par note
 ```bash
@@ -191,6 +194,7 @@ MATCH (m:Movie)
 WHERE m.rate >= 8
 RETURN m.company AS Studio, m.title AS Movie, m.rate AS Rating
 ```
+![alt text](images/image10.png)
 
 Profit vs Note
 ```bash
@@ -198,6 +202,15 @@ MATCH (m:Movie)
 WHERE m.budget IS NOT NULL AND m.gross_worldwide IS NOT NULL AND m.rate IS NOT NULL
 RETURN m.title AS Movie, m.rate AS Rating, (m.gross_worldwide - m.budget) AS Profit
 ```
+![alt text](images/image11.png)
+
+Filtre sur 10 films
+```bash
+MATCH (m:Movie)
+RETURN m
+LIMIT 10;
+```
+![alt text](images/image12.png)
 
 🔹 Auteur
 
